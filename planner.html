@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chat AET | Planner</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f6f7fb;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif}.app{max-width:800px;margin:auto;min-height:100vh;padding:20px}.card{background:#fff;border:1px solid #e2e6ee;border-radius:16px;padding:16px;margin:12px 0}.title{font-size:20px;font-weight:800}.muted{color:#697386;font-size:13px}.row{display:flex;gap:10px}.row>*{flex:1}textarea{width:100%;min-height:110px;resize:vertical;border:1px solid #d9dee8;border-radius:12px;padding:12px;font:inherit}button{border:0;border-radius:12px;padding:11px 16px;background:#111827;color:#fff;font-weight:700}button.secondary{background:#eef1f6;color:#111827}.step{border:1px solid #e2e6ee;border-radius:13px;padding:13px;margin:9px 0}.stephead{display:flex;align-items:center;gap:8px}.badge{font-size:11px;padding:4px 8px;border-radius:999px;background:#eef1f6}.passed{background:#e8f7ee}.failed{background:#fdecec}.running{background:#fff5d6}.bar{height:8px;background:#e9edf3;border-radius:999px;overflow:hidden;margin-top:10px}.fill{height:100%;width:0;background:#111827;transition:.25s}.hidden{display:none}pre{white-space:pre-wrap;background:#f4f5f7;padding:10px;border-radius:10px;overflow:auto}
+</style></head>
+<body><main class="app">
+<div class="card"><div class="title">🤖 Chat AET Planner</div><div class="muted">Planner → Executor → Verifier → Replanner</div></div>
+<div class="card"><textarea id="goal" placeholder="例：Chat AETの自動学習システムを完成させる"></textarea><div class="row" style="margin-top:10px"><button id="planBtn">🧠 計画を作る</button><button id="resetBtn" class="secondary">リセット</button></div></div>
+<section id="plan" class="hidden"><div class="card"><div id="summary"></div><div class="bar"><div id="fill" class="fill"></div></div><div id="progress" class="muted" style="margin-top:7px"></div></div><div id="steps"></div><div class="card"><button id="replanBtn" class="secondary">♻️ 失敗したStepを再計画</button></div></section>
+</main>
+<script src="./planner-engine.js"></script><script>
+const endpoint='https://zvcssqtcshljucbbkoac.supabase.co/functions/v1/chat-aet-router';
+let plan=null;
+const $=id=>document.getElementById(id);
+function render(){if(!plan)return; $('plan').classList.remove('hidden');$('summary').innerHTML='<b>🎯 目標</b><div style="margin-top:6px">'+esc(plan.goal)+'</div>';const p=ChatAETPlanner.progress(plan);$('fill').style.width=p.percent+'%';$('progress').textContent=`進捗 ${p.passed}/${p.total} (${p.percent}%) · ${p.status}`;$('steps').innerHTML=plan.steps.map((s,i)=>`<div class="step"><div class="stephead"><b>${i+1}. ${esc(s.title)}</b><span class="badge ${s.status}">${esc(s.status)}</span></div><div class="muted" style="margin-top:5px">${esc(s.goal)}</div><div class="muted" style="margin-top:5px">成功条件: ${s.successCriteria.map(esc).join(' / ')||'未設定'}</div><div style="margin-top:9px"><button data-id="${esc(s.id)}" data-action="start">▶ 実行開始</button> <button class="secondary" data-id="${esc(s.id)}" data-action="pass">✅ 検証OK</button> <button class="secondary" data-id="${esc(s.id)}" data-action="fail">❌ 検証失敗</button></div></div>`).join('');
+$('steps').querySelectorAll('button').forEach(b=>b.onclick=()=>{const s=plan.steps.find(x=>x.id===b.dataset.id);if(!s)return;if(b.dataset.action==='start')ChatAETPlanner.startStep(plan,s.id);if(b.dataset.action==='pass')ChatAETPlanner.verifyStep(plan,s.id,{passed:true,note:'手動検証OK'});if(b.dataset.action==='fail')ChatAETPlanner.verifyStep(plan,s.id,{passed:false,note:'手動検証失敗'});render()})}
+function esc(v){return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;')}
+async function createAIPlan(goal){
+ const prompt=`あなたはChat AETのPlannerです。次の目標を実行可能な5〜12個のStepに分解してください。既存機能を壊さないこと。各Stepにtitle, goal, dependsOn, successCriteria, risk, requiresApprovalを設定してください。必ずJSONのみで返してください。形式: {"goal":"...","constraints":[],"assumptions":[],"successCriteria":[],"riskLevel":"low","steps":[{"id":"step-1","title":"...","goal":"...","dependsOn":[],"successCriteria":["..."],"risk":"low","requiresApproval":false}]}`;
+ const r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:prompt+'\n目標:'+goal,history:[],memory:''})});
+ if(!r.ok)throw new Error('Planner AIへの接続に失敗しました');
+ const reader=r.body?.getReader();if(!reader)throw new Error('ストリーミング非対応');const dec=new TextDecoder();let buf='',text='';while(true){const {value,done}=await reader.read();if(done)break;buf+=dec.decode(value,{stream:true});const lines=buf.split('\n');buf=lines.pop()||'';for(const line of lines){if(!line.trim().startsWith('data:'))continue;const raw=line.trim().slice(5).trim();if(!raw||raw==='[DONE]')continue;try{const o=JSON.parse(raw);text+=o.delta??o.answer??o.choices?.[0]?.delta?.content??''}catch{}}}text=text.replace(/```json|```/g,'').trim();return JSON.parse(text)
+}
+$('planBtn').onclick=async()=>{const goal=$('goal').value.trim();if(!goal)return alert('目標を入力してください');$('planBtn').disabled=true;$('planBtn').textContent='🧠 計画中…';try{const ai=await createAIPlan(goal);plan=ChatAETPlanner.createPlan(ai);render()}catch(e){alert('計画作成に失敗: '+e.message)}finally{$('planBtn').disabled=false;$('planBtn').textContent='🧠 計画を作る'}};
+$('replanBtn').onclick=()=>{if(!plan)return;const failed=plan.steps.find(s=>s.status==='failed');if(!failed)return alert('失敗したStepがありません');ChatAETPlanner.replan(plan,{steps:[{id:failed.id+'-retry',title:failed.title+'の再試行',goal:failed.goal+'。前回の失敗原因を確認して再実行する',dependsOn:failed.dependsOn,successCriteria:failed.successCriteria,risk:failed.risk,requiresApproval:failed.requiresApproval}]});render()};
+$('resetBtn').onclick=()=>{plan=null;$('plan').classList.add('hidden');$('goal').value=''};
+</script></body></html>
