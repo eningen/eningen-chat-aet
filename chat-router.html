@@ -32,10 +32,8 @@ function renderMarkdown(source){
   s=s.replace(/^> (.+)$/gm,'<blockquote>$1</blockquote>');
   s=s.replace(/(^|\n)([-*] .+(?:\n[-*] .+)*)/g,(_,prefix,list)=>prefix+'<ul>'+list.split('\n').map(x=>'<li>'+x.slice(2)+'</li>').join('')+'</ul>');
   // Inline math: convert $...$ to MathJax \(...\), while leaving ordinary currency $ intact.
-  // A math expression must contain a closing $ and have math-like content such as operators,
-  // digits, letters, braces, backslashes, parentheses or common TeX commands.
   s=s.replace(/(^|[^$\\])\$([^$\n]+)\$(?!\$)/g,(_,prefix,math)=>{
-    if(!/[0-9A-Za-z一-龯ぁ-んァ-ヶ\\^_{}=+\-*/().,<>]|\\\\/.test(math)) return prefix+'$'+math+'$';
+    if(!/[0-9A-Za-z一-龯ぁ-んァ-ヶ\\^_{}=+\-*/().,<>]/.test(math)) return prefix+'$'+math+'$';
     return prefix+`\\(${math}\\)`;
   });
   s=s.replace(/\n{2,}/g,'</p><p>').replace(/\n/g,'<br>');
